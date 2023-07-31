@@ -18,9 +18,10 @@ oauth.register(
     api_base_url=settings.AUTH0_DOMAIN,
     access_token_url='https://'+settings.AUTH0_DOMAIN +'/oauth/token',
     redirect_uri=settings.AUTH0_DOMAIN + '/callback',
+    authorize_params={"audience":settings.AUTH0_AUDIENCE},
     authorize_url='https://' + settings.AUTH0_DOMAIN + '/authorize',
     client_kwargs={
-        "scope": "openid email profile",
+        "scope": "openid email profile read:results",
     },
     server_metadata_url=f"https://{settings.AUTH0_DOMAIN}/.well-known/openid-configuration",
 )
@@ -52,7 +53,6 @@ def index(request):
         context={
             "session": request.session.get("user"),
             "pretty": json.dumps(request.session.get("user"), indent=4),
-            "url": 'https://'+settings.AUTH0_DOMAIN+'/authorize?response_type=token&client_id='+settings.AUTH0_CLIENT_ID+'&redirect_uri=http://localhost:3000/login&audience='+settings.AUTH0_AUDIENCE+'&state=abc123',
         },
     )
 
@@ -85,35 +85,25 @@ def logout(request):
 
 
 def actions(request):
+    #checks if it has read:triggers as a permission in the scope
+    has_read_triggers_permission = False
+    permissions = request.session.get("user")['scope'].split()
+    if 'read:triggers' in permissions:
+        has_read_triggers_permission = True
+    
     headers = { 'content-type': "application/json"}
     
     api_url_clients = f"https://{settings.AUTH0_DOMAIN}/api/v2/clients?fields=name"
     api_url_actions = f"https://{settings.AUTH0_DOMAIN}/api/v2/actions/actions"
-    api_url_roles = f"https://{settings.AUTH0_DOMAIN}/api/v2/roles"
 
     headers = {
         'Accept': 'application/json',
         'Authorization': 'Bearer ' + get_auth_token(),  
     }
-    roles = requests.get(api_url_roles, headers=headers)
-
-    #Grabs the id for the manager role
-    for i in roles.json():
-        if i['name'] == 'Manager':
-            id = i['id']
-    api_url_permissions = f"https://{settings.AUTH0_DOMAIN}/api/v2/roles/" + id + '/permissions'
-    permissions = requests.get(api_url_permissions, headers=headers)
-
-    #Checks if 'read:triggers' is in the list of permissions of the 'Manager' role
-    has_permission = False
-    for i in permissions.json():
-        if i['permission_name'] == 'read:triggers':
-            has_permission = True
-            break
 
     clients = requests.get(api_url_clients, headers=headers)
     clients.raise_for_status()
-    
+
     clientDictionary = {}
     for obj in clients.json():
         name = obj['name']
@@ -126,7 +116,7 @@ def actions(request):
         code = obj["code"]
         for key in clientDictionary:
             if key in code:
-                if 'Manager' in request.session.get("user")['userinfo']['actions-example.com/roles'] and has_permission:
+                if 'Manager' in request.session.get("user")['userinfo']['actions-example.com/roles'] and has_read_triggers_permission:
                     clientDictionary[key].append({'action_id': obj['id'], 'action_name':obj['name'], 'triggers': obj['supported_triggers']})
                 else:
                     clientDictionary[key].append({'action_id': obj['id'], 'action_name':obj['name']}) 
