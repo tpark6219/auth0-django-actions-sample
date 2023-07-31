@@ -2,10 +2,11 @@ import json
 from authlib.integrations.django_client import OAuth
 from django.conf import settings
 from django.shortcuts import redirect, render, redirect
-from django.urls import reverse
+from django.urls import reverse, resolve
 from django.http import JsonResponse
 from urllib.parse import quote_plus, urlencode
 import requests
+import jwt
 
 oauth = OAuth()
 
@@ -13,8 +14,13 @@ oauth.register(
     "auth0",
     client_id=settings.AUTH0_CLIENT_ID,
     client_secret=settings.AUTH0_CLIENT_SECRET,
+    audience='https://'+settings.AUTH0_AUDIENCE,
+    api_base_url=settings.AUTH0_DOMAIN,
+    access_token_url='https://'+settings.AUTH0_DOMAIN +'/oauth/token',
+    redirect_uri=settings.AUTH0_DOMAIN + '/callback',
+    authorize_url='https://' + settings.AUTH0_DOMAIN + '/authorize',
     client_kwargs={
-        "scope": "openid profile email",
+        "scope": "openid email profile",
     },
     server_metadata_url=f"https://{settings.AUTH0_DOMAIN}/.well-known/openid-configuration",
 )
@@ -23,13 +29,12 @@ def get_auth_token():
     url = "https://dev-1fvz6325acw860zv.us.auth0.com/oauth/token"
     audience = "https://dev-1fvz6325acw860zv.us.auth0.com/api/v2/" 
     payload = {
-        "client_id": "<CLIENT_ID>",
-        "client_secret": "<CLIENT_SECRET>",
+        "client_id": settings.AUTH0_CLIENT_ID,
+        "client_secret": settings.AUTH0_CLIENT_SECRET,
         "audience": audience,
-        "grant_type": "client_credentials"
+        "grant_type": "client_credentials",
     }
-    headers = { 'content-type': "application/json" }
-
+    headers = { 'content-type': "application/json"}
     response = requests.post(url, json=payload, headers=headers)
     if response.status_code == 200:
         data = response.json()
@@ -41,13 +46,13 @@ def get_auth_token():
         return None
 
 def index(request):
-
     return render(
         request,
         "index.html",
         context={
             "session": request.session.get("user"),
             "pretty": json.dumps(request.session.get("user"), indent=4),
+            "url": 'https://'+settings.AUTH0_DOMAIN+'/authorize?response_type=token&client_id='+settings.AUTH0_CLIENT_ID+'&redirect_uri=http://localhost:3000/login&audience='+settings.AUTH0_AUDIENCE+'&state=abc123',
         },
     )
 
@@ -80,12 +85,32 @@ def logout(request):
 
 
 def actions(request):
+    headers = { 'content-type': "application/json"}
+    
     api_url_clients = f"https://{settings.AUTH0_DOMAIN}/api/v2/clients?fields=name"
     api_url_actions = f"https://{settings.AUTH0_DOMAIN}/api/v2/actions/actions"
+    api_url_roles = f"https://{settings.AUTH0_DOMAIN}/api/v2/roles"
+
     headers = {
         'Accept': 'application/json',
         'Authorization': 'Bearer ' + get_auth_token(),  
     }
+    roles = requests.get(api_url_roles, headers=headers)
+
+    #Grabs the id for the manager role
+    for i in roles.json():
+        if i['name'] == 'Manager':
+            id = i['id']
+    api_url_permissions = f"https://{settings.AUTH0_DOMAIN}/api/v2/roles/" + id + '/permissions'
+    permissions = requests.get(api_url_permissions, headers=headers)
+
+    #Checks if 'read:triggers' is in the list of permissions of the 'Manager' role
+    has_permission = False
+    for i in permissions.json():
+        if i['permission_name'] == 'read:triggers':
+            has_permission = True
+            break
+
     clients = requests.get(api_url_clients, headers=headers)
     clients.raise_for_status()
     
@@ -101,7 +126,7 @@ def actions(request):
         code = obj["code"]
         for key in clientDictionary:
             if key in code:
-                if 'Manager' in request.session.get("user")['userinfo']['actions-example.com/roles']:
+                if 'Manager' in request.session.get("user")['userinfo']['actions-example.com/roles'] and has_permission:
                     clientDictionary[key].append({'action_id': obj['id'], 'action_name':obj['name'], 'triggers': obj['supported_triggers']})
                 else:
                     clientDictionary[key].append({'action_id': obj['id'], 'action_name':obj['name']}) 
