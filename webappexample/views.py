@@ -21,7 +21,7 @@ oauth.register(
     authorize_params={"audience":settings.AUTH0_AUDIENCE},
     authorize_url='https://' + settings.AUTH0_DOMAIN + '/authorize',
     client_kwargs={
-        "scope": "openid email profile read:results",
+        "scope": "openid email profile read:triggers",
     },
     server_metadata_url=f"https://{settings.AUTH0_DOMAIN}/.well-known/openid-configuration",
 )
